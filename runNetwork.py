@@ -3,6 +3,7 @@ import model as mdl
 from modules import *
 import numpy as np
 import random
+import sys
 #from tensorflow.app.flags import DEFINE_integer as int_flag
 #from tf.app.flags import DEFINE_float as flt_flag
 #from tf.app.flags import DEFINE_string as str_flag
@@ -11,10 +12,10 @@ import random
 
 
 # High-level options
-tf.app.flags.DEFINE_string("modelName", "SSRL", "Name of the model")
+tf.app.flags.DEFINE_string("modelName", "Basic", "Name of the model")
 tf.app.flags.DEFINE_integer("gpu", 0, "Which GPU to use, if you have multiple.")
 tf.app.flags.DEFINE_string("mode", "train", "Available modes: train / show_examples / official_eval")
-tf.app.flags.DEFINE_string("experiment_name", "diffraction", "Unique name for your experiment. This will create a directory by this name in the experiments/ directory, which will hold all data related to this experiment.")
+tf.app.flags.DEFINE_string("experiment_name", "MNIST", "Unique name for your experiment. This will create a directory by this name in the experiments/ directory, which will hold all data related to this experiment.")
 tf.app.flags.DEFINE_integer("Nepochs", 0, "Number of epochs to train. 0 means train indefinitely.")
 tf.app.flags.DEFINE_integer("print_every", 1000, "Print training statues every N batches")
 tf.app.flags.DEFINE_integer("eval_every", 1, "Print training statues every N batches")
@@ -23,7 +24,7 @@ tf.app.flags.DEFINE_bool("verbose", True, "Print")
 # Hyperparameters
 tf.app.flags.DEFINE_float("dropout", 0.15, "Fraction of units randomly dropped on non-recurrent connections.")
 tf.app.flags.DEFINE_integer("batch_size", 10, "Batch size to use")
-tf.app.flags.DEFINE_integer("embedding_size", 512, "Size of vector representation.")
+tf.app.flags.DEFINE_integer("embedding_size", 256, "Size of vector representation.")
 
 # Optimization
 tf.app.flags.DEFINE_float("learning_rate", 0.001, "Learning rate.")
@@ -38,6 +39,7 @@ tf.app.flags.DEFINE_float("trainRatio", 0.70, "Ratio of the data that should be 
 tf.app.flags.DEFINE_float("valRatio", 0.15, "ratio of the data that should be used for validation")
 tf.app.flags.DEFINE_float("testRatio", 0.15, "ratio of the data that should be used for testing")
 tf.app.flags.DEFINE_integer("Nfeatures", 11, "Number of features per event") 
+tf.app.flags.DEFINE_integer("eval_batch_size", 64, "Maximum number of samples to evaluate at a time")
 
 # Saving
 tf.app.flags.DEFINE_integer("save_every", 5, "Save model parameters every N training steps")
@@ -63,46 +65,55 @@ tfConfig.gpu_options.allow_growth = True
 print("Importing Data")
 
 ###  Import all the data  ####
-dataDir = "data/"
-dataX, dataY = importData(dataDir)
-dataX -= np.mean(dataX)
-dataX /= np.var(dataX)
+dataDir = "data/mnist/"
+dataX_train, dataY_train, dataX_test, dataY_test = importData(dataDir)
 
+dataX_train -= np.mean(dataX_train)
+dataX_train /= np.var(dataX_train)
+dataX_test  -= np.mean(dataX_test)
+dataX_test  /= np.var(dataX_test)
 
-#if verbose:
-#  print("Original data X/Y shape:  {}  /  {}".format(dataX.shape, dataY.shape))
+if FLAGS.verbose:
+  print("Original data X/Y shape:  {}  /  {}"
+      .format(dataX_train.shape, dataY_train.shape))
 
 ###  Split data  ###
 data = {}
-Nevents = dataX.shape[0]
+Nevents = dataX_train.shape[0]
 randInds = np.arange(Nevents)
 random.shuffle(randInds)
-ind1 = int(np.ceil(FLAGS.trainRatio*Nevents))
-ind2 = int(np.ceil((FLAGS.trainRatio + FLAGS.valRatio)*Nevents))
-ind3 = int(np.ceil((1 - FLAGS.testRatio)*Nevents))
-data["train_X"]   = dataX[randInds[:ind1],:]
-data["val_X"]     = dataX[randInds[ind1:ind2],:]
-data["test_X"]    = dataX[randInds[ind2:],:]
-data["train_Y"]   = dataY[randInds[:ind1],:]
-data["val_Y"]     = dataY[randInds[ind1:ind2],:]
-data["test_Y"]    = dataY[randInds[ind2:],:]
+indData = int(np.ceil(FLAGS.trainRatio/(FLAGS.trainRatio + FLAGS.valRatio)*Nevents))
+inds = [1, 3, 5, 10, 9, 11, 13, 15, 17, 19]
+#data["train_X"]   = dataX_train[inds,:,:,:] #[randInds[:indData],:,:,:]
+data["train_X"]   = dataX_train[randInds[:indData],:,:,:]
+data["val_X"]     = dataX_train[randInds[indData:Nevents],:,:,:]
+data["train_Y"]   = dataY_train[randInds[:indData],:]
+#data["train_Y"]   = dataY_train[inds,:] #randInds[:indData],:]
+data["val_Y"]     = dataY_train[randInds[indData:Nevents],:]
+data["test_X"]    = dataX_test
+data["test_Y"]    = dataY_test
+
+###  Print data distribution  ###
+for i in range(10):
+  print(i, 
+      float(len(np.where(data["train_Y"] == i)[0]))/data["train_Y"].shape[0],
+      float(len(np.where(data["val_Y"] == i)[0]))/data["val_Y"].shape[0])
 
 
-diffractionNet = mdl.diffractionCLASS(FLAGS, data)
+
+
+############################
+#####  Begin Training  #####
+############################
+
+basicNet = mdl.basicNNCLASS(FLAGS, data)
 
 with tf.Session(config=tfConfig) as sess:
-  # Restore previously trained models
-
-  initializeModel(sess, diffractionNet, FLAGS.checkpoint_path, 
+  # Initialize model with new or restored parameters
+  initializeModel(sess, basicNet, FLAGS.checkpoint_path, 
       expect_exists=False)
-  #diffractionNet.restoreModel(sess, FLAGS.checkpoint_path,
-  #    import_train_history=True)
 
-  diffractionNet.train(sess)
-
-
-
-
+  basicNet.train(sess)
 
 
 

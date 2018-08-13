@@ -11,6 +11,7 @@ from PIL import Image
 import sys
 import matplotlib.pyplot as plt
 from matplotlib import colors as mcolors
+from mnist import MNIST
 
 ########################
 ###  Importing Data  ###
@@ -19,39 +20,21 @@ from matplotlib import colors as mcolors
 def importData(dataDir):
 
   #####  Initialize Variables  #####
-  imgSize = 512
-  rebin   = 256
-  dataX = None 
-  dataY = None
-  quality = {
-      "blank"   : 0,
-      "noxtal"  : 1,
-      "weak"    : 2,
-      "good"    : 3,
-      "strong"  : 4}
+  mndata = MNIST(dataDir)
+  dataX_train, dataY_train = mndata.load_training()
+  dataX_test, dataY_test = mndata.load_testing()
 
-  #####  Import data  #####
-  data = pd.read_csv(dataDir + "categories1.txt", 
-      delim_whitespace=True, header=None)
+  dataX_train = np.array(dataX_train, dtype=np.float) 
+  dataY_train = np.array(dataY_train, dtype=np.int32)
+  dataX_test  = np.array(dataX_test, dtype=np.float)
+  dataY_test  = np.array(dataY_test, dtype=np.int32)
 
-  Nsamples = 30 #len(data.loc[:,0])
-  dataX = np.zeros((Nsamples, rebin, rebin, 1), dtype=np.float32)
-  dataY = np.zeros((Nsamples, 3), dtype=np.float32)
-  dataY[:,1:] = np.array((data.loc[:Nsamples-1,2:]).values, dtype=np.float32)
-  for i in range(Nsamples):
-    imgObject = Image.open(dataDir + "png/" + data.loc[i,0])
-    imgArray  = np.reshape(
-                  np.array(imgObject.getdata()).astype(np.float32),
-                  (rebin,2,rebin,-1))
-    dataX[i,:,:,0] = imgArray.mean(-1).mean(1)
+  dataX_train = np.reshape(dataX_train, (dataX_train.shape[0],28,28,1))
+  dataY_train = np.reshape(dataY_train, (-1,1))
+  dataX_test  = np.reshape(dataX_test, (dataX_test.shape[0],28,28,1))
+  dataY_test  = np.reshape(dataY_test, (-1,1))
 
-    if data.loc[i,1] in quality.keys():
-      dataY[i,0] = quality[data.loc[i,1]]
-    else:
-      print("ERROR: Cannot interpret data quality {}".format(data.loc[i,1]))
-      sys.exit()
-
-  return dataX, dataY
+  return dataX_train, dataY_train, dataX_test, dataY_test
 
 
 
@@ -90,66 +73,18 @@ Embed input into learned vector representation
 """
 class predictionClass(object):
 
-  def __init__(self, embedding_size, Nquality_classes):
+  def __init__(self, embedding_size, Nclasses):
     self.embedding_size = embedding_size
-    self.Nquality_classes = Nquality_classes
+    self.Nclasses = Nclasses
 
   def predict(self, inputX, isTraining):
     with tf.variable_scope("embedding"):
 
-      print("inp", inputX.shape.as_list())
-      conv1     = tf.contrib.layers.conv2d(inputs=inputX, 
-                    num_outputs=32, kernel_size=4)
-      print("conv1", conv1.shape.as_list())
-      conv1_BN  = tf.contrib.layers.batch_norm(conv1, 
-                    is_training=isTraining)
-      print("conv1BN", conv1_BN.shape.as_list())
-      pool1     = tf.layers.max_pooling2d(inputs=conv1_BN,
-                    pool_size=4, strides=2,
-                    name="pool1")
-      print("pool1", pool1.shape.as_list())
-      conv2     = tf.contrib.layers.conv2d(inputs=pool1,
-                    num_outputs=64, kernel_size=4)
-      print("conv2", conv2.shape.as_list())
-      conv2_BN  = tf.contrib.layers.batch_norm(conv2, 
-                    is_training=isTraining)
-      print("conv2BN", conv2_BN.shape.as_list())
-      pool2     = tf.layers.max_pooling2d(inputs=conv2_BN,
-                    pool_size=4, strides=2,
-                    name="pool2")
-      print("pool2", pool2.shape.as_list())
+      W = tf.Variable(tf.zeros([784, self.Nclasses]))
+      b = tf.Variable(tf.zeros([self.Nclasses]))
 
-      pool2Shape = pool2.shape.as_list()
-      pool2Flat = tf.reshape(pool2, [-1, pool2Shape[1]*pool2Shape[2]*pool2Shape[3]])
-      print("flat", pool2Flat.shape.as_list())
-      fullConn1 = tf.contrib.layers.fully_connected(
-                    inputs=pool2Flat,
-                    num_outputs=1024,
-                    activation_fn=tf.nn.relu,
-                    scope="FC1")
-      print("pool2", pool2.shape.as_list())
-      embedding = tf.contrib.layers.fully_connected(
-                    inputs=fullConn1,
-                    num_outputs=self.embedding_size,
-                    activation_fn=tf.nn.relu,
-                    scope="FC2")
-      print("pool2", pool2.shape.as_list())
+      x = tf.reshape(inputX, (-1,784))
+      predictions = tf.matmul(x, W) + b
 
-      qualityLogits = tf.contrib.layers.fully_connected(
-                        inputs=embedding,
-                        num_outputs=self.Nquality_classes,
-                        activation_fn=None)
-      print("qual", qualityLogits.shape.as_list())
-      flt1           = tf.contrib.layers.fully_connected(
-                        inputs=embedding,
-                        num_outputs=1,
-                        activation_fn=None)
-      print("flt1", flt1.shape.as_list())
-      flt2           = tf.contrib.layers.fully_connected(
-                        inputs=embedding,
-                        num_outputs=1,
-                        activation_fn=None)
-      print("flt2", flt2.shape.as_list())
-
-      return qualityLogits, flt1, flt2
+      return predictions
 

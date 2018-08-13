@@ -19,7 +19,7 @@ def stable_norm_grad(x, dy):
 def stable_norm(x):
   return tf.norm(x, axis=-1)
 
-class diffractionCLASS():
+class basicNNCLASS():
   """
   modelCLASS is a parent class to neural networks that encapsulates all 
   the logic necessary for training general nerual network archetectures.
@@ -102,6 +102,7 @@ class diffractionCLASS():
     self.Nrowcol  = data["train_X"].shape[1]
     self.Noutputs = data["train_Y"].shape[-1]
     self.Nclasses = np.unique(self.data["train_Y"][:,0]).shape[0]
+    print("Nclasses", self.Nclasses)
 
     # Misc
     self.global_step = tf.Variable(0, name="global_step", trainable=False)
@@ -155,12 +156,10 @@ class diffractionCLASS():
       print("ERROR: Range of data requested is outside of data size!!!")
       sys.exit()
     
-    outDataX         = self.data[dSet+"_X"][minInd:maxInd]
-    outDataY_quality = self.data[dSet+"_Y"][minInd:maxInd,0].astype(np.int32)
-    outDataY_flt1    = np.reshape(self.data[dSet+"_Y"][minInd:maxInd,1], (-1,1))
-    outDataY_flt2    = np.reshape(self.data[dSet+"_Y"][minInd:maxInd,2], (-1,1))
+    outDataX = self.data[dSet+"_X"][minInd:maxInd]
+    outDataY = self.data[dSet+"_Y"][minInd:maxInd,0]
 
-    return outDataX, outDataY_quality, outDataY_flt1, outDataY_flt2
+    return outDataX, outDataY
 
 
 
@@ -170,15 +169,11 @@ class diffractionCLASS():
     Initialize all place holders with size variables from self.config
     """
 
-    self.inputX = tf.placeholder(name="inputFeatures", dtype=tf.float32,
+    self.inputX     = tf.placeholder(name="inputFeatures", dtype=tf.float32,
                              shape=[None, self.Nrowcol, self.Nrowcol, 1])
-    self.inputY_quality = tf.placeholder(name="inputQualityLabels", dtype=tf.int32,
+    self.inputY     = tf.placeholder(name="inputLabels", dtype=tf.int32,
                              shape=[None])
-    self.inputY_flt1    = tf.placeholder(name="inputFlt1Labels", dtype=tf.float32,
-                             shape=[None, 1])
-    self.inputY_flt2    = tf.placeholder(name="inputFlt2Labels", dtype=tf.float32,
-                             shape=[None, 1])
-    self.isTraining     = tf.placeholder(name="isTraining", dtype=tf.bool)
+    self.isTraining = tf.placeholder(name="isTraining", dtype=tf.bool)
 
   
   #############################################################################
@@ -230,60 +225,26 @@ class diffractionCLASS():
     """
 
     self.predictionCLS = predictionClass(self.FLAGS.embedding_size, self.Nclasses)
-    self.qualityPred, self.flt1Pred, self.flt2Pred\
-          = self.predictionCLS.predict(self.inputX, self.isTraining)
+    self.prediction = self.predictionCLS.predict(self.inputX, self.isTraining)
 
 
   #############################################################################
   def add_loss(self):
 
     with tf.variable_scope("loss"):
-      # Quality loss
-      self.qualityLoss = tf.reduce_mean(tf.nn.sparse_softmax_cross_entropy_with_logits(
-                            logits=self.qualityPred,
-                            labels=self.inputY_quality))
-      tf.summary.scalar("qualityLoss", self.qualityLoss)
-
-      # float1 loss
-      self.flt1Loss    = tf.losses.mean_squared_error(
-                            predictions=self.flt1Pred,
-                            labels=self.inputY_flt1)
-      tf.summary.scalar("flt1Loss", self.flt1Loss)
-
-      # float2 loss
-      self.flt2Loss    = tf.losses.mean_squared_error(
-                            predictions=self.flt2Pred,
-                            labels=self.inputY_flt2)
-      tf.summary.scalar("flt2Loss", self.flt2Loss)
-
-      self.loss = self.qualityLoss + self.flt1Loss + self.flt2Loss
+      self.loss = tf.reduce_mean(tf.nn.sparse_softmax_cross_entropy_with_logits(
+                            logits=self.prediction,
+                            labels=self.inputY))
+      tf.summary.scalar("loss", self.loss)
 
 
   #############################################################################
   def add_accuracy(self):
 
     with tf.variable_scope("accuracy"):
-      # Quality accuracy
-      qualLogits = tf.argmax(self.qualityPred, axis=-1)
-      _,self.qualityAcc = tf.metrics.accuracy(
-                          predictions=qualLogits,
-                          labels=self.inputY_quality)
-
-      # float1 accuracy
-      self.flt1Acc    = tf.reduce_mean(
-                          tf.abs(
-                            tf.divide((self.flt1Pred - self.inputY_flt1),
-                              (self.inputY_flt1 + 1e-5))
-                          )
-                        )
-
-      # float2 accuracy
-      self.flt2Acc    = tf.reduce_mean(
-                          tf.abs(
-                            tf.divide((self.flt2Pred - self.inputY_flt2),
-                              (self.inputY_flt2 + 1e-5))
-                          )
-                        )
+      logits = tf.argmax(self.prediction, axis=-1, output_type=tf.int32)
+      compare = tf.equal(logits, self.inputY)
+      self.accuracy = tf.reduce_mean(tf.cast(compare, tf.float32))
 
 
   #############################################################################
@@ -292,9 +253,7 @@ class diffractionCLASS():
     # Build feed dictionary
     input_feed = { 
       self.inputX : batch[0], 
-      self.inputY_quality : batch[1],
-      self.inputY_flt1 : batch[2],
-      self.inputY_flt2 : batch[3],
+      self.inputY : batch[1],
       self.isTraining : True}
 
     # Output feed
@@ -334,16 +293,13 @@ class diffractionCLASS():
         "./checkpoints/", 
         sess.graph)
 
-    #if not (self.modelRestored or self.hasTrained):
-    #  sess.run(tf.global_variables_initializer())
-    #  sess.run(tf.local_variables_initializer())
-
-    # Print number of model parameters
-    tic = time.time()
-    params = tf.trainable_variables()
-    num_params = sum(map(lambda t: np.prod(tf.shape(t.value()).eval()), params))
-    toc = time.time()
-    #logging.info("Number of params: %d (retrieval took %f secs)" % (num_params, toc - tic))
+    # Print initial model predictions
+    trainLoss = self.get_loss(sess, dSet="train")
+    trainAccs = self.get_accuracy(sess, dSet="train")
+    valLoss   = self.get_loss(sess, dSet="val")
+    valAccs   = self.get_accuracy(sess, dSet="val")
+    logging.info("Initial training Loss / Accuracy: %f / %f)" % (trainLoss, trainAccs))
+    logging.info("Initial validation Loss / Accuracy: %f / %f)" % (valLoss, valAccs))
 
     Nbatches = int(np.ceil(self.data["train_X"].shape[0]/float(self.FLAGS.batch_size)))
     randomRatio = 1.0
@@ -357,9 +313,7 @@ class diffractionCLASS():
       epoch += 1
       epoch_tic = time.time()
 
-      logging.info("\n\n/////  Begin Epoch {}  /////".format(epoch))
-      if self.FLAGS.verbose :
-        print("\n\nEpoch: %i" % (epoch))
+      logging.info("\n\n/////  Begin Epoch {}  /////\n".format(epoch))
 
       #####  Loop over mini batches  #####
       for ibt in range(Nbatches):
@@ -372,15 +326,6 @@ class diffractionCLASS():
         curLoss, global_step = self.run_train_step(sess, batch, summaryWriter)
         tstep_toc = time.time()
         tstep_time = tstep_toc - tstep_tic
-
-        # Print training results
-        if global_step % self.FLAGS.print_every == 0:
-          print_info = "iter %d, epoch %d, batch %d, loss %.5f, batch time %.3f" %\
-              (global_step, epoch, ibt, curLoss, tstep_time)
-          loggin.info(print_info)
-          
-          if self.FLAGS.verbose:
-            print(print_info)
 
         # Save model
         if global_step % self.FLAGS.save_every == 0:
@@ -401,7 +346,7 @@ class diffractionCLASS():
           trainAccs = self.get_accuracy(sess, dSet="train")
 
           self.writeSummary(trainLoss, "train/loss", summaryWriter, global_step)
-          self.writeSummary(trainAccs[0], "train/acc", summaryWriter, global_step)
+          self.writeSummary(trainAccs, "train/acc", summaryWriter, global_step)
           self.history["train"].append((global_step, trainLoss, trainAccs))
 
           # Evaluate validation data
@@ -409,16 +354,13 @@ class diffractionCLASS():
           valAccs = self.get_accuracy(sess, dSet="val")
 
           self.writeSummary(valLoss, "val/loss", summaryWriter, global_step)
-          self.writeSummary(valAccs[0], "val/acc", summaryWriter, global_step)
+          self.writeSummary(valAccs, "val/acc", summaryWriter, global_step)
           self.history["val"].append((global_step, valLoss, valAccs))
 
           # Logging results
-          print_info = "%i\tTraining %.5f / %.5f / %.5f / %.5f \tValidation %.5f / %.5f / %.5f / %.5f" %\
-              (global_step, trainLoss, trainAccs[0], trainAccs[1], trainAccs[2], valLoss, valAccs[0], valAccs[1], valAccs[2])
+          print_info = "%i\tTraining %.5f / %.5f \tValidation %.5f / %.5f" %\
+              (global_step, trainLoss, trainAccs, valLoss, valAccs)
           logging.info(print_info)
-          print(print_info)
-          if self.FLAGS.verbose:
-            print(print_info)
 
           # Save best models
           if (best_val_loss is None) or (valLoss < best_val_loss):
@@ -431,10 +373,10 @@ class diffractionCLASS():
             self.saveTrainingHistory(
                     fileName=self.FLAGS.bestModel_loss_ckpt_path + "/" + self.FLAGS.experiment_name, 
                     global_step=global_step)
-          if (best_val_acc is None) or (valAccs[0] > best_val_acc):
+          if (best_val_acc is None) or (valAccs > best_val_acc):
             logging.info("Saving best accuracy model at iteration {} in {}".format(
                     global_step, self.FLAGS.bestModel_acc_ckpt_path))
-            best_val_acc = valAccs[0]
+            best_val_acc = valAccs
             self.bestAccSaver.save(sess, 
                     self.FLAGS.bestModel_acc_ckpt_path + "/" + self.FLAGS.experiment_name, 
                     global_step=global_step)
@@ -526,20 +468,14 @@ class diffractionCLASS():
 
     if (dataX is not None) and (dataY is not None):
       feed_dict[self.inputX] = dataX
-      if dataY is not None:
-        feed_dict[self.inputY_quality]  = dataY[0]
-        feed_dict[self.inputY_flt1]     = dataY[1]
-        feed_dict[self.inputY_flt2]     = dataY[2]
+      feed_dict[self.inputY] = dataY
     elif dSet is not None:
       batch = self.get_data(self.data[dSet+"_X"].shape[0], dSet)
-      feed_dict[self.inputX]          = batch[0]
-      feed_dict[self.inputY_quality]  = batch[1]
-      feed_dict[self.inputY_flt1]     = batch[2]
-      feed_dict[self.inputY_flt2]     = batch[3]
+      feed_dict[self.inputX]  = batch[0]
+      feed_dict[self.inputY]  = batch[1]
     else:
       print("ERROR: Must specify dSet or dataX and dataY for get_accuracy!!!")
       raise RuntimeError
-
    
     return sess.run(outputs, feed_dict)
 
@@ -551,21 +487,16 @@ class diffractionCLASS():
 
     if (dataX is not None) and (dataY is not None):
       feed_dict[self.inputX] = dataX
-      if dataY is not None:
-        feed_dict[self.inputY_quality]  = dataY[0]
-        feed_dict[self.inputY_flt1]     = dataY[1]
-        feed_dict[self.inputY_flt2]     = dataY[2]
+      feed_dict[self.inputY] = dataY
     elif dSet is not None:
       batch = self.get_data(self.data[dSet+"_X"].shape[0], dSet)
-      feed_dict[self.inputX]          = batch[0]
-      feed_dict[self.inputY_quality]  = batch[1]
-      feed_dict[self.inputY_flt1]     = batch[2]
-      feed_dict[self.inputY_flt2]     = batch[3]
+      feed_dict[self.inputX] = batch[0]
+      feed_dict[self.inputY] = batch[1]
     else:
       print("ERROR: Must specify dSet or dataX and dataY for get_accuracy!!!")
       raise RuntimeError
 
-    return sess.run([self.qualityPred, self.flt1Pred, self.flt2Pred], feed_dict)
+    return sess.run([self.prediction], feed_dict)
 
 
   #############################################################################
@@ -575,21 +506,16 @@ class diffractionCLASS():
 
     if (dataX is not None) and (dataY is not None):
       feed_dict[self.inputX] = dataX
-      feed_dict[self.inputY_quality]  = dataY[0]
-      feed_dict[self.inputY_flt1]     = dataY[1]
-      feed_dict[self.inputY_flt2]     = dataY[2]
+      feed_dict[self.inputY] = dataY
     elif dSet is not None:
       batch = self.get_data(self.data[dSet+"_X"].shape[0], dSet)
-      feed_dict[self.inputX]          = batch[0]
-      feed_dict[self.inputY_quality]  = batch[1]
-      feed_dict[self.inputY_flt1]     = batch[2]
-      feed_dict[self.inputY_flt2]     = batch[3]
+      feed_dict[self.inputX] = batch[0]
+      feed_dict[self.inputY] = batch[1]
     else:
       print("ERROR: Must specify dSet or dataX and dataY for get_accuracy!!!")
       raise RuntimeError
 
-
-    return sess.run([self.qualityAcc, self.flt1Acc, self.flt2Acc], feed_dict)
+    return sess.run([self.accuracy], feed_dict)[0]
 
 
   #############################################################################
@@ -599,15 +525,11 @@ class diffractionCLASS():
 
     if (dataX is not None) and (dataY is not None):
       feed_dict[self.inputX] = dataX
-      feed_dict[self.inputY_quality]  = dataY[0]
-      feed_dict[self.inputY_flt1]     = dataY[1]
-      feed_dict[self.inputY_flt2]     = dataY[2]
+      feed_dict[self.inputY] = dataY
     elif dSet is not None:
       batch = self.get_data(self.data[dSet+"_X"].shape[0], dSet)
-      feed_dict[self.inputX]          = batch[0]
-      feed_dict[self.inputY_quality]  = batch[1]
-      feed_dict[self.inputY_flt1]     = batch[2]
-      feed_dict[self.inputY_flt2]     = batch[3]
+      feed_dict[self.inputX] = batch[0]
+      feed_dict[self.inputY] = batch[1]
 
     else:
       print("ERROR: Must specify dSet or dataX and dataY for get_loss!!!")
@@ -655,25 +577,3 @@ class diffractionCLASS():
     else:
       self.saver.save(self.sess, fileName)
 
-"""
-  #############################################################################
-  def restoreModel(self, session, folderName, expect_exists=False, import_train_history=False):
-    print("folder",folderName)
-
-    ckpt = tf.train.get_checkpoint_state(folderName)
-    #ckpt = tf.train.get_checkpoint_state(folderName + "/" + self.FLAGS.experiment_name)
-    #print(ckpt)
-    #print(ckpt.model_checkpoint_path)
-    if ckpt:
-      self.saver.restore(session, ckpt.model_checkpoint_path)
-    else:
-      if expect_exists:
-        raise RuntimeError("ERROR: Cannot find saved checkpoint in %s" % folderName)
-      else:
-        print("Cannot find saved checkpoint at %s" % folderName)
-
-    if import_train_history:
-      pass
-
-    self.restoredModel = True
-"""
