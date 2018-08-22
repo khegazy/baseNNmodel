@@ -37,6 +37,21 @@ def importData(dataDir):
   return dataX_train, dataY_train, dataX_test, dataY_test
 
 
+def printDataInfo(xTrn, yTrn, xTst, yTst, 
+    xTrnDs, xValDs, xTstDs):
+
+  print "\n\n##############################"
+  print "#####  Data Information  #####"
+  print "##############################\n"
+  print "#####  Original Data Structure  #####"
+  print "\tTrain X/Y: {} / {}".format(xTrn.shape, yTrn.shape)
+  print "\tTest X/Y: {} / {}".format(xTst.shape, yTst.shape)
+  print "\n#####  tf.Data Data Structure  #####"
+  print "\tTrain: {} / {}".format(xTrnDs.output_shapes, xTrnDs.output_types)
+  print "\tValid: {} / {}".format(xValDs.output_shapes, xValDs.output_types)
+  print "\tTest: {} / {}".format(xTstDs.output_shapes, xTstDs.output_types)
+
+
 
 #############################################################################
 def initializeModel(session, model, folderName, expect_exists=False, import_train_history=False):

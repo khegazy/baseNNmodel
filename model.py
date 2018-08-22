@@ -68,7 +68,7 @@ class basicNNCLASS():
                                      self.isTraining_placeHolder : False})
   """
 
-  def __init__(self, FLAGS, data):
+  def __init__(self, FLAGS, dataset_train, dataset_valid, dataset_test, parameters):
     """
     Initialize
       config:
@@ -90,24 +90,69 @@ class basicNNCLASS():
           verbose: enable print statements during training
     """
 
-    ###################################
-    ### Standard/Required Variables ###
-    ###################################
+    #############################
+    ##### Setting Variables #####
+    #############################
 
     # FLAGS
     self.FLAGS = FLAGS
 
     # Data
-    self.data     = data
-    self.Nrowcol  = data["train_X"].shape[1]
-    self.Noutputs = data["train_Y"].shape[-1]
-    self.Nclasses = np.unique(self.data["train_Y"][:,0]).shape[0]
-    print("Nclasses", self.Nclasses)
+    self.features = None
+    self.labels   = None
+    self.dataset_train = dataset_train
+    self.dataset_valid = dataset_valid
+    self.dataset_test  = dataset_test
 
-    # Misc
+    self.dataset_train = self.dataset_train.shuffle(
+                              buffer_size=self.FLAGS.shuffle_buffer_size)
+    self.dataset_valid = self.dataset_valid.shuffle(
+                              buffer_size=self.FLAGS.shuffle_buffer_size)
+    self.dataset_test  = self.dataset_test.shuffle(
+                              buffer_size=self.FLAGS.shuffle_buffer_size)
+
+    self.dataset_train = self.dataset_train.batch(batch_size=self.FLAGS.train_batch_size)
+    self.dataset_valid = self.dataset_valid.batch(batch_size=self.FLAGS.eval_batch_size)
+    self.dataset_test  = self.dataset_test.batch(batch_size=self.FLAGS.eval_batch_size)
+
+    self.dataset_train = self.dataset_train.prefetch(1)
+    self.dataset_valid = self.dataset_valid.prefetch(1)
+    self.dataset_test  = self.dataset_test.prefetch(1)
+
+    # Data iterator
+    self.train_iter = tf.data.Iterator.from_structure(
+                        self.dataset_train.output_types, 
+                        self.dataset_train.output_shapes)
+    self.train_iter_train_op = self.train_iter.make_initializer(self.dataset_train)
+
+    self.eval_iter  = tf.data.Iterator.from_structure(
+                        self.dataset_train.output_types, 
+                        self.dataset_train.output_shapes)
+    self.eval_iter_train_op = self.eval_iter.make_initializer(self.dataset_train)
+    self.eval_iter_valid_op = self.eval_iter.make_initializer(self.dataset_valid)
+    self.eval_iter_test_op  = self.eval_iter.make_initializer(self.dataset_test)
+
+    # Parameters
+    self.Nrowcol = -1
+    if "NrowCol" in parameters:
+      self.Nrowcol  = parameters["NrowCol"]
+    
+    self.Nclasses = -1
+    if "Nclasses" in parameters:
+      self.Nclasses = parameters["Nclasses"]
+
     self.global_step = tf.Variable(0, name="global_step", trainable=False)
 
-    #####  Create Graph  #####
+    if self.FLAGS.verbose:
+      print "Printing parameters"
+      print "Nrowcol: \t{}".format(self.Nrowcol)
+      print "Nclasses: \t{}".format(self.Nclasses)
+
+
+    #########################
+    #####  Build Graph  #####
+    #########################
+
     with tf.variable_scope(self.FLAGS.modelName):
       self.initialize_placeHolders()
       self.build_graph()
@@ -118,9 +163,12 @@ class basicNNCLASS():
     with tf.variable_scope("optimize"):
       self.initialize_learning_rate()
       self.initialize_optimization()
+    
 
-    # Save History
-    #self.modelRestored  = False
+    #####################################
+    #####  History and Checkpoints  #####
+    #####################################
+
     self.hasTrained     = False
     self._lastSaved     = collections.defaultdict(None)
     self.history        = collections.defaultdict(list)
@@ -169,10 +217,6 @@ class basicNNCLASS():
     Initialize all place holders with size variables from self.config
     """
 
-    self.inputX     = tf.placeholder(name="inputFeatures", dtype=tf.float32,
-                             shape=[None, self.Nrowcol, self.Nrowcol, 1])
-    self.inputY     = tf.placeholder(name="inputLabels", dtype=tf.int32,
-                             shape=[None])
     self.isTraining = tf.placeholder(name="isTraining", dtype=tf.bool)
 
   
@@ -225,16 +269,19 @@ class basicNNCLASS():
     """
 
     self.predictionCLS = predictionClass(self.FLAGS.embedding_size, self.Nclasses)
-    self.prediction = self.predictionCLS.predict(self.inputX, self.isTraining)
+    self.prediction = self.predictionCLS.predict(self.features, self.isTraining)
 
 
   #############################################################################
   def add_loss(self):
 
     with tf.variable_scope("loss"):
+      self.loss_sum = tf.reduce_sum(tf.nn.sparse_softmax_cross_entropy_with_logits(
+                            logits=self.prediction,
+                            labels=self.labels))
       self.loss = tf.reduce_mean(tf.nn.sparse_softmax_cross_entropy_with_logits(
                             logits=self.prediction,
-                            labels=self.inputY))
+                            labels=self.labels))
       tf.summary.scalar("loss", self.loss)
 
 
@@ -244,16 +291,15 @@ class basicNNCLASS():
     with tf.variable_scope("accuracy"):
       logits = tf.argmax(self.prediction, axis=-1, output_type=tf.int32)
       compare = tf.equal(logits, self.inputY)
+      self.accuracy_sum = tf.reduce_sum(tf.cast(compare, tf.float32))
       self.accuracy = tf.reduce_mean(tf.cast(compare, tf.float32))
 
 
   #############################################################################
-  def run_train_step(self, sess, batch, summaryWriter):
+  def run_train_step(self, sess, summaryWriter):
 
     # Build feed dictionary
     input_feed = { 
-      self.inputX : batch[0], 
-      self.inputY : batch[1],
       self.isTraining : True}
 
     # Output feed
@@ -313,17 +359,23 @@ class basicNNCLASS():
       epoch += 1
       epoch_tic = time.time()
 
+      # Initialize iterator
+      sess.run(self.train_iter_train_op)
+
       logging.info("\n\n/////  Begin Epoch {}  /////\n".format(epoch))
 
       #####  Loop over mini batches  #####
-      for ibt in range(Nbatches):
+      while True:
 
         # Get batch data
-        batch = self.get_data(self.FLAGS.batch_size, "train", batchIter=ibt)
+        try :
+          sess.run([self.features, self.labels])
+        except tf.errors.OutOfRangeError:
+          break
 
         # Perform training step
         tstep_tic = time.time()
-        curLoss, global_step = self.run_train_step(sess, batch, summaryWriter)
+        curLoss, global_step = self.run_train_step(sess, summaryWriter)
         tstep_toc = time.time()
         tstep_time = tstep_toc - tstep_tic
 
@@ -467,8 +519,8 @@ class basicNNCLASS():
     feed_dict = {self.isTraining : False}
 
     if (dataX is not None) and (dataY is not None):
-      feed_dict[self.inputX] = dataX
-      feed_dict[self.inputY] = dataY
+      feed_dict[self.features] = dataX
+      feed_dict[self.labels]   = dataY
     elif dSet is not None:
       batch = self.get_data(self.data[dSet+"_X"].shape[0], dSet)
       feed_dict[self.inputX]  = batch[0]
@@ -485,18 +537,39 @@ class basicNNCLASS():
     
     feed_dict = {self.isTraining : False}
 
-    if (dataX is not None) and (dataY is not None):
-      feed_dict[self.inputX] = dataX
-      feed_dict[self.inputY] = dataY
-    elif dSet is not None:
-      batch = self.get_data(self.data[dSet+"_X"].shape[0], dSet)
-      feed_dict[self.inputX] = batch[0]
-      feed_dict[self.inputY] = batch[1]
+    if dataX is not None and dataY is not None:
+      feed_dict[self.features] = dataX
+      feed_dict[self.labels]   = dataY
+      return sess.run([self.prediction], feed_dict) 
+
+    if dSet is "train":
+      sess.run(self.eval_iter_train_op)
+    elif dSet is "val":
+      sess.run(self.eval_iter_valid_op)
+    elif dSet is "test":
+      sess.run(self.eval_iter_test_op)
     else:
-      print("ERROR: Must specify dSet or dataX and dataY for get_accuracy!!!")
+      print("ERROR: Do not recognize dataset {}".format(dSet))
       raise RuntimeError
 
-    return sess.run([self.prediction], feed_dict)
+    try:
+      sess.run([self.features, self.labels])
+      runningPredictions = sess.run([self.prediction], feed_dict)
+    except tf.errors.OutOfRangeError:
+      print("Error: Cannot get predictions because dataset is empty")
+      raise RuntimeError
+
+    while True:
+      # Get batch data
+      try :
+        sess.run([self.features, self.labels])
+        runningPredictions.concatenate(
+                sess.run([self.prediction], feed_dict), 
+                axis=0)
+      except tf.errors.OutOfRangeError:
+        break
+
+    return runningPredictions
 
 
   #############################################################################
@@ -504,18 +577,34 @@ class basicNNCLASS():
 
     feed_dict = {self.isTraining : False}
 
-    if (dataX is not None) and (dataY is not None):
-      feed_dict[self.inputX] = dataX
-      feed_dict[self.inputY] = dataY
-    elif dSet is not None:
-      batch = self.get_data(self.data[dSet+"_X"].shape[0], dSet)
-      feed_dict[self.inputX] = batch[0]
-      feed_dict[self.inputY] = batch[1]
+    if dataX is not None and dataY is not None:
+      feed_dict[self.features] = dataX
+      feed_dict[self.labels]   = dataY
+      return sess.run([self.accuracy], feed_dict)[0]
+
+    runningAccuracy = 0
+    if dSet is "train":
+      sess.run(self.eval_iter_train_op)
+      Nsamples = self.Ntrain_samples
+    elif dSet is "val":
+      sess.run(self.eval_iter_valid_op)
+      Nsamples = self.Nvalid_samples
+    elif dSet is "test":
+      sess.run(self.eval_iter_test_op)
+      Nsamples = self.Ntest_samples
     else:
-      print("ERROR: Must specify dSet or dataX and dataY for get_accuracy!!!")
+      print("ERROR: Do not recognize dataset {}".format(dSet))
       raise RuntimeError
 
-    return sess.run([self.accuracy], feed_dict)[0]
+    while True:
+      # Get batch data
+      try :
+        sess.run([self.features, self.labels])
+        runningAccuracy += sess.run([self.accuracy_sum], feed_dict)[0]
+      except tf.errors.OutOfRangeError:
+        break
+
+    return runningAccuracy/Nsamples
 
 
   #############################################################################
@@ -523,19 +612,34 @@ class basicNNCLASS():
 
     feed_dict = {self.isTraining : False}
 
-    if (dataX is not None) and (dataY is not None):
-      feed_dict[self.inputX] = dataX
-      feed_dict[self.inputY] = dataY
-    elif dSet is not None:
-      batch = self.get_data(self.data[dSet+"_X"].shape[0], dSet)
-      feed_dict[self.inputX] = batch[0]
-      feed_dict[self.inputY] = batch[1]
+    if dataX is not None and dataY is not None:
+      feed_dict[self.features] = dataX
+      feed_dict[self.labels]   = dataY
+      return sess.run([self.loss], feed_dict)[0]
 
+    if dSet is "train":
+      sess.run(self.eval_iter_train_op)
+      Nsamples = self.Ntrain_samples
+    elif dSet is "val":
+      sess.run(self.eval_iter_valid_op)
+      Nsamples = self.Nvalid_samples
+    elif dSet is "test":
+      sess.run(self.eval_iter_test_op)
+      Nsamples = self.Ntest_samples
     else:
-      print("ERROR: Must specify dSet or dataX and dataY for get_loss!!!")
+      print("ERROR: Do not recognize dataset {}".format(dSet))
       raise RuntimeError
 
-    return sess.run([self.loss], feed_dict)[0]
+    runningLoss = 0
+    while True:
+      # Get batch data
+      try :
+        sess.run([self.features, self.labels])
+        runningLoss += sess.run([self.loss_sum], feed_dict)[0]
+      except tf.errors.OutOfRangeError:
+        break
+
+    return runningLoss/self.Ntrain_samples
 
   
   #############################################################################

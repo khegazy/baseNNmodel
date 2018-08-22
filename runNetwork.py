@@ -23,7 +23,7 @@ tf.app.flags.DEFINE_bool("verbose", True, "Print")
 
 # Hyperparameters
 tf.app.flags.DEFINE_float("dropout", 0.15, "Fraction of units randomly dropped on non-recurrent connections.")
-tf.app.flags.DEFINE_integer("batch_size", 10, "Batch size to use")
+tf.app.flags.DEFINE_integer("train_batch_size", 10, "Batch size while training")
 tf.app.flags.DEFINE_integer("embedding_size", 256, "Size of vector representation.")
 
 # Optimization
@@ -40,6 +40,7 @@ tf.app.flags.DEFINE_float("valRatio", 0.15, "ratio of the data that should be us
 tf.app.flags.DEFINE_float("testRatio", 0.15, "ratio of the data that should be used for testing")
 tf.app.flags.DEFINE_integer("Nfeatures", 11, "Number of features per event") 
 tf.app.flags.DEFINE_integer("eval_batch_size", 64, "Maximum number of samples to evaluate at a time")
+tf.app.flags.DEFINE_integer("shuffle_buffer_size", 1000, "Number of samples to shuffle at a time")
 
 # Saving
 tf.app.flags.DEFINE_integer("save_every", 5, "Save model parameters every N training steps")
@@ -78,35 +79,40 @@ if FLAGS.verbose:
       .format(dataX_train.shape, dataY_train.shape))
 
 ###  Split data  ###
-data = {}
 Nevents = dataX_train.shape[0]
-randInds = np.arange(Nevents)
-random.shuffle(randInds)
 indData = int(np.ceil(FLAGS.trainRatio/(FLAGS.trainRatio + FLAGS.valRatio)*Nevents))
 inds = [1, 3, 5, 10, 9, 11, 13, 15, 17, 19]
-#data["train_X"]   = dataX_train[inds,:,:,:] #[randInds[:indData],:,:,:]
-data["train_X"]   = dataX_train[randInds[:indData],:,:,:]
-data["val_X"]     = dataX_train[randInds[indData:Nevents],:,:,:]
-data["train_Y"]   = dataY_train[randInds[:indData],:]
-#data["train_Y"]   = dataY_train[inds,:] #randInds[:indData],:]
-data["val_Y"]     = dataY_train[randInds[indData:Nevents],:]
-data["test_X"]    = dataX_test
-data["test_Y"]    = dataY_test
 
-###  Print data distribution  ###
-for i in range(10):
-  print(i, 
-      float(len(np.where(data["train_Y"] == i)[0]))/data["train_Y"].shape[0],
-      float(len(np.where(data["val_Y"] == i)[0]))/data["val_Y"].shape[0])
+dataset_train = tf.data.Dataset.from_tensor_slices(
+                  (dataX_train[:indData,:,:,:], 
+                   np.reshape(dataY_train[:indData,:], (-1)))).batch(FLAGS.train_batch_size)
+dataset_valid = tf.data.Dataset.from_tensor_slices(
+                  (dataX_train[indData:,:,:,:], 
+                   np.reshape(dataY_train[indData:,:], (-1)))).batch(FLAGS.eval_batch_size)
+dataset_test  = tf.data.Dataset.from_tensor_slices(
+                  (dataX_test, np.reshape(dataY_test, (-1)))).batch(FLAGS.eval_batch_size)
+
+printDataInfo(dataX_train, dataY_train, dataX_test, dataY_test,
+    dataset_train, dataset_valid, dataset_test)
 
 
+####################
+###  Parameters  ###
+####################
+
+parameters = {
+    "Nclasses" : 10}
 
 
 ############################
 #####  Begin Training  #####
 ############################
 
-basicNet = mdl.basicNNCLASS(FLAGS, data)
+basicNet = mdl.basicNNCLASS(FLAGS, 
+              dataset_train, 
+              dataset_valid, 
+              dataset_test,
+              parameters)
 
 with tf.Session(config=tfConfig) as sess:
   # Initialize model with new or restored parameters
