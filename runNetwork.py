@@ -12,14 +12,15 @@ import sys
 
 
 # High-level options
-tf.app.flags.DEFINE_string("modelName", "Basic", "Name of the model")
-tf.app.flags.DEFINE_integer("gpu", 0, "Which GPU to use, if you have multiple.")
+tf.app.flags.DEFINE_string("model_name", "Basic", "Name of the model")
 tf.app.flags.DEFINE_string("mode", "train", "Available modes: train / show_examples / official_eval")
 tf.app.flags.DEFINE_string("experiment_name", "MNIST", "Unique name for your experiment. This will create a directory by this name in the experiments/ directory, which will hold all data related to this experiment.")
+tf.app.flags.DEFINE_integer("gpu", 0, "Which GPU to use, if you have multiple.")
 tf.app.flags.DEFINE_integer("Nepochs", 0, "Number of epochs to train. 0 means train indefinitely.")
 tf.app.flags.DEFINE_integer("print_every", 1000, "Print training statues every N batches")
 tf.app.flags.DEFINE_integer("eval_every", 1, "Print training statues every N batches")
 tf.app.flags.DEFINE_bool("verbose", True, "Print")
+tf.app.flags.DEFINE_bool("debug", False, "Print various sanity checks")
 
 # Hyperparameters
 tf.app.flags.DEFINE_float("dropout", 0.15, "Fraction of units randomly dropped on non-recurrent connections.")
@@ -29,21 +30,22 @@ tf.app.flags.DEFINE_integer("embedding_size", 256, "Size of vector representatio
 # Optimization
 tf.app.flags.DEFINE_float("learning_rate", 0.001, "Learning rate.")
 tf.app.flags.DEFINE_string("learning_rate_decay", "None", "Which learning rate decay to use. None means no decay")
-tf.app.flags.DEFINE_float("decay_rate", 0, "Learing rate decay when specified above")
+tf.app.flags.DEFINE_float("decay_rate", 0, "Learning rate decay when specified above")
+tf.app.flags.DEFINE_float("train_variable_decay", 0.99, "Decay parameter of the saved training loss and accuracy")
 tf.app.flags.DEFINE_string("optimizer", "Adam", "Name of optimizer to use")
 tf.app.flags.DEFINE_float("beta1", 0.95, "Beta1 parameter for Adam optimizer.")
 tf.app.flags.DEFINE_float("beta2", 0.995, "Beta2 parameter for Adam optimizer.")
 
 # Dataset
-tf.app.flags.DEFINE_float("trainRatio", 0.70, "Ratio of the data that should be used for training")
-tf.app.flags.DEFINE_float("valRatio", 0.15, "ratio of the data that should be used for validation")
-tf.app.flags.DEFINE_float("testRatio", 0.15, "ratio of the data that should be used for testing")
+tf.app.flags.DEFINE_float("train_ratio", 0.70, "Ratio of the data that should be used for training")
+tf.app.flags.DEFINE_float("valid_ratio", 0.15, "ratio of the data that should be used for validation")
+tf.app.flags.DEFINE_float("test_ratio", 0.15, "ratio of the data that should be used for testing")
 tf.app.flags.DEFINE_integer("Nfeatures", 11, "Number of features per event") 
 tf.app.flags.DEFINE_integer("eval_batch_size", 64, "Maximum number of samples to evaluate at a time")
 tf.app.flags.DEFINE_integer("shuffle_buffer_size", 1000, "Number of samples to shuffle at a time")
 
 # Saving
-tf.app.flags.DEFINE_integer("save_every", 5, "Save model parameters every N training steps")
+tf.app.flags.DEFINE_integer("save_every", 50, "Save model parameters every N training steps")
 tf.app.flags.DEFINE_string("bestModel_loss_ckpt_path", "./checkpoints/bestLoss", "File name of the saved model with the best loss")
 tf.app.flags.DEFINE_string("bestModel_acc_ckpt_path", "./checkpoints/bestAcc", "File name of the saved model with the best accuracy")
 tf.app.flags.DEFINE_string("checkpoint_path", "./checkpoints", "File name of the saved checkpoint model")
@@ -63,8 +65,6 @@ tfConfig.gpu_options.allow_growth = True
 ###  Get Data  ###
 ##################
 
-print("Importing Data")
-
 ###  Import all the data  ####
 dataDir = "data/mnist/"
 dataX_train, dataY_train, dataX_test, dataY_test = importData(dataDir)
@@ -79,21 +79,31 @@ if FLAGS.verbose:
       .format(dataX_train.shape, dataY_train.shape))
 
 ###  Split data  ###
-Nevents = dataX_train.shape[0]
-indData = int(np.ceil(FLAGS.trainRatio/(FLAGS.trainRatio + FLAGS.valRatio)*Nevents))
-inds = [1, 3, 5, 10, 9, 11, 13, 15, 17, 19]
+Nevents  = dataX_train.shape[0]
+splitInd = int(np.ceil(FLAGS.train_ratio/(FLAGS.train_ratio + FLAGS.valid_ratio)*Nevents))
+residual = splitInd%FLAGS.train_batch_size
+if residual:
+  if splitInd + (FLAGS.train_batch_size - residual) < Nevents:
+    splitInd += FLAGS.train_batch_size - residual
+  else:
+    splitInd -= residual
 
-dataset_train = tf.data.Dataset.from_tensor_slices(
-                  (dataX_train[:indData,:,:,:], 
-                   np.reshape(dataY_train[:indData,:], (-1)))).batch(FLAGS.train_batch_size)
-dataset_valid = tf.data.Dataset.from_tensor_slices(
-                  (dataX_train[indData:,:,:,:], 
-                   np.reshape(dataY_train[indData:,:], (-1)))).batch(FLAGS.eval_batch_size)
-dataset_test  = tf.data.Dataset.from_tensor_slices(
-                  (dataX_test, np.reshape(dataY_test, (-1)))).batch(FLAGS.eval_batch_size)
+singleYinds = [1, 3, 5, 10, 9, 11, 13, 15, 17, 19]
+
+# Create datasets
+with tf.device('/cpu:0'):
+  dataset_train = tf.data.Dataset.from_tensor_slices(
+      (dataX_train[:splitInd,:,:,:], 
+        np.reshape(dataY_train[:splitInd,:], (-1))))
+  dataset_valid = tf.data.Dataset.from_tensor_slices(
+                    (dataX_train[splitInd:,:,:,:], 
+                   np.reshape(dataY_train[splitInd:,:], (-1))))
+  dataset_test  = tf.data.Dataset.from_tensor_slices(
+                    (dataX_test, np.reshape(dataY_test, (-1))))
 
 printDataInfo(dataX_train, dataY_train, dataX_test, dataY_test,
     dataset_train, dataset_valid, dataset_test)
+
 
 
 ####################
