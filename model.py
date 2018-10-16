@@ -320,9 +320,9 @@ class basicNNCLASS():
         sess.graph)
 
     # Create handles
-    self.train_handle = sess.run(self.train_iter.string_handle())
-    self.valid_handle = sess.run(self.valid_iter.string_handle())
-    self.test_handle = sess.run(self.test_iter.string_handle())
+    #self.train_handle = sess.run(self.train_iter.string_handle())
+    #self.valid_handle = sess.run(self.valid_iter.string_handle())
+    #self.test_handle = sess.run(self.test_iter.string_handle())
 
     # Initialize iterator
     sess.run(self.train_iter.initializer)
@@ -511,12 +511,6 @@ class basicNNCLASS():
     Run the session with inputs from feed_dict and return the outputs listed
     in the list outputs. The following lines are required, but more items 
     can be added to the feed_dict.
-
-    return self.sess.run(outputs, 
-              feed_dict = { 
-                  self.X_placeHolder : self.data["val_X"], 
-                  self.Y_placeHolder : self.data["val_Y"], 
-                  self.isTraining_placeHolder : False})
     """
 
     feed_dict = {self.isTraining : False}
@@ -524,15 +518,30 @@ class basicNNCLASS():
     if (dataX is not None) and (dataY is not None):
       feed_dict[self.features] = dataX
       feed_dict[self.labels]   = dataY
-    elif dSet is not None:
-      batch = self.get_data(self.data[dSet+"_X"].shape[0], dSet)
-      feed_dict[self.inputX]  = batch[0]
-      feed_dict[self.inputY]  = batch[1]
+      return sess.run(output, feed_dict) 
+
+    if dSet is "train":
+      sess.run(self.train_iter.initializer)
+      feed_dict[self.handle] = self.train_handle
+    elif dSet is "val":
+      sess.run(self.valid_iter.initializer)
+      feed_dict[self.handle] = self.valid_handle
+    elif dSet is "test":
+      sess.run(self.test_iter.initializer)
+      feed_dict[self.handle] = self.test_handle
     else:
-      print("ERROR: Must specify dSet or dataX and dataY for get_accuracy!!!")
+      print("ERROR: Do not recognize dataset {}".format(dSet))
       raise RuntimeError
-   
-    return sess.run(outputs, feed_dict)
+
+    runningOutput = []
+    while True:
+      # Get batch data
+      try :
+        runningOutput.append(sess.run(output, feed_dict))
+      except tf.errors.OutOfRangeError:
+        break
+
+    return runningOutput
 
 
   #############################################################################
@@ -546,17 +555,22 @@ class basicNNCLASS():
       return sess.run([self.prediction], feed_dict) 
 
     if dSet is "train":
-      sess.run(self.eval_iter_train_op)
+      sess.run(self.train_iter.initializer)
+      feed_dict[self.handle] = self.train_handle
     elif dSet is "val":
-      sess.run(self.eval_iter_valid_op)
+      sess.run(self.valid_iter.initializer)
+      feed_dict[self.handle] = self.valid_handle
     elif dSet is "test":
-      sess.run(self.eval_iter_test_op)
+      sess.run(self.test_iter.initializer)
+      feed_dict[self.handle] = self.test_handle
     else:
       print("ERROR: Do not recognize dataset {}".format(dSet))
       raise RuntimeError
 
+    if feed_dict[self.handle] is None:
+      raise RuntimeError("Cannot evaluate with handle = None")
+
     try:
-      sess.run([self.features, self.labels])
       runningPredictions = sess.run([self.prediction], feed_dict)
     except tf.errors.OutOfRangeError:
       print("Error: Cannot get predictions because dataset is empty")
@@ -565,7 +579,6 @@ class basicNNCLASS():
     while True:
       # Get batch data
       try :
-        sess.run([self.features, self.labels])
         runningPredictions.concatenate(
                 sess.run([self.prediction], feed_dict), 
                 axis=0)
@@ -671,9 +684,9 @@ class basicNNCLASS():
     """
 
     if global_step is not None: 
-      fullName = fileName + "_history_" + str(global_step) + ".pl"
+      fullName = fileName + "-" + str(global_step) + "-history.pl"
     else:
-      fullName = fileName + "_history.pl"
+      fullName = fileName + "-history.pl"
 
     if fileName in self._lastSaved.keys():
       os.remove(self._lastSaved[str(fileName)])

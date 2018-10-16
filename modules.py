@@ -10,6 +10,7 @@ from PIL import Image
 import sys
 import matplotlib.pyplot as plt
 from matplotlib import colors as mcolors
+import pickle as pl
 from mnist import MNIST
 
 ########################
@@ -67,18 +68,23 @@ def get_shape(tensor):
 def initializeModel(session, model, folderName, expect_exists=False, import_train_history=False):
 
   ckpt = tf.train.get_checkpoint_state(folderName)
-  #ckpt = tf.train.get_checkpoint_state(folderName + "/" + self.FLAGS.experime    nt_name)
   v2_path = ckpt.model_checkpoint_path + ".index" if ckpt else ""
   if ckpt and (tf.gfile.Exists(ckpt.model_checkpoint_path) or tf.gfile.Exists(v2_path)):
       print("Reading model parameters from %s" % ckpt.model_checkpoint_path)
       model.saver.restore(session, ckpt.model_checkpoint_path)
+
+      # Import history
+      model.history = pl.load(open(ckpt.model_checkpoint_path 
+          + "-history.pl", "rb"))
   else:
     if expect_exists:
-      raise RuntimeError("ERROR: Cannot find saved checkpoint in %s" % folderName)
+      raise RuntimeError("ERROR: Cannot find saved checkpoint in %s" 
+          % folderName)
     else:
       print("Cannot find saved checkpoint at %s" % folderName)
       session.run(tf.global_variables_initializer())
-      print('Num params: %d' % sum(v.get_shape().num_elements() for v in tf.trainable_variables()))
+      print('Num params: %d' % sum(v.get_shape().num_elements()\
+          for v in tf.trainable_variables()))
 
   session.run(tf.local_variables_initializer())
 
