@@ -21,73 +21,50 @@ def stable_norm(x):
 
 class basicNNCLASS():
   """
-  modelCLASS is a parent class to neural networks that encapsulates all 
-  the logic necessary for training general nerual network archetectures.
-  The graph is built by this class and the tensorflow session is held 
-  by this class as well. Networks inhereting this class must inheret in
-  the following way and define the following functions:
+  basicNNCLASS is a parent class to neural networks that encapsulates all 
+  the logic necessary for training general nerual network architectures.
+  The graph is built by this class and the tensorflow session is passed 
+  to this class. Networks inhereting this class must inheret in the same
+  way as the function placeholders below:
     ########################################
     #####  Build Neural Network Class  #####
     ########################################
     class NN(modelClass):
       
-      def __init__(self, inp_config, inp_data, **inp_kwargs):
-        modelCLASS.__init__(self, config = inp_config, data = inp_data, kwargs = inp_kwargs)
-      def _initialize_placeHolders(self):
-        Function to initialize place holders, only rand during __init__
-      def predict(self):
-        Function containing the network architecture to output the 
+      def __init__(self, ...):
+        modelCLASS.__init__(self, 
+            FLAGS, dataset_train, 
+            dataset_valid, 
+            dataset_test, 
+            parameters)
+      def initialize_placeHolders(self):
+        Function to initialize place holders, only run during __init__
+      def build_graph(self):
+        Function containing the network architecture to infer the 
         predictions or logits
-      def calculate_loss(self, preds, Y):
-        Function to calculate loss given the predictions/logits from the 
-        output of self.predict and the labels (Y)
-      def calculate_accuracy(self, preds, Y):
-        Function to calculate the accuracy for the predictions/logits 
-        from self.predict against the labels(Y)
-         
-  Training a network using modelCLASS can be done after the previous 
-  functions are defined. Once the class is initialized the graph must 
-  first be built using self.build_graph(). After successfull graph 
-  construction the network can be trained using self.train(). The 
-  loss and accuracy history of the training can be plotted by calling 
-  self.plot_results(). An example of training the network is given below.
-  
-      # Declare Class
-      config = configCLASS()
-      NN = neuralNetCLASS(inp_config=config)
-      # Build Graph
-      NN.build_graph()
-      # Train
-      NN.train()
-      NN.plot_results()
-  One can run the session to get the following values
-    loss, acc, preds = NN.sess.run([NN.loss, NN.accuracy, NN.predictions],
-                                   feed_dict = {
-                                     self.X_placeHolder : data["type_X"],
-                                     self.Y_placeHolder : data["type_Y"],
-                                     self.isTraining_placeHolder : False})
+      def add_loss(self, preds, Y):
+        Function to calculate loss (self.loss) given the predictions 
+        and truth values in self.prediction and self.labels.
+      def add_accuracy(self, preds, Y):
+        Function to calculate accuracy (self.accuracy) given the predictions 
+        and truth values in self.prediction and self.labels.
+
+  The model is trained after succusfully building the graph by calling
+  NN.train(session)
   """
 
   def __init__(self, FLAGS, dataset_train, dataset_valid, dataset_test, parameters):
     """
     Initialize
-      config:
-        A configure class that contains only variables used to set flags,
-        data size, network parameters, parameterize the training, and 
-        hold any other input variables into modelCLASS.
-      data:
-        Data to be trained and validated on. Data is a dictionary of 
-        [string : np.ndarray] pairs with the following keys:
-          data["train_X"] = training sample features
-          data["train_Y"] = training sample labels
-          data["val_X"] = validation sample features
-          data["val_Y"] = validation sample labels
-      kwargs:
-        keyword arguments for variables that are often changed, arguments 
-        given this way will superceded arguments in the config file.
-          NNtype: neural network type, given a type certain variables 
-                  are mare accessible
-          verbose: enable print statements during training
+      FLAGS:
+        tf.app.flags that contain common model variables and 
+        hyperparameters: layer sizes, optimizers, batch sizes, etc. 
+      datasets:
+        tf.dataset classes holding the training, validation, and test
+        data.
+      parameters:
+        variables that are not common among various NN archetictures,
+        but specific to this network.
     """
 
     #############################
@@ -209,23 +186,6 @@ class basicNNCLASS():
     self.history = collections.defaultdict(list)
 
 
-
-  #############################################################################
-  def get_data(self, Nsamples, dSet, batchIter=0, shuffleInds=False):
-
-    minInd = Nsamples*batchIter
-    maxInd = min([Nsamples*(1+batchIter), self.data[dSet+"_X"].shape[0]])
-    if minInd >= self.data[dSet+"_X"].shape[0]:
-      print("ERROR: Range of data requested is outside of data size!!!")
-      sys.exit()
-    
-    outDataX = self.data[dSet+"_X"][minInd:maxInd]
-    outDataY = self.data[dSet+"_Y"][minInd:maxInd,0]
-
-    return outDataX, outDataY
-
-
-
   #############################################################################
   def initialize_placeHolders(self):
     """
@@ -278,9 +238,9 @@ class basicNNCLASS():
   #############################################################################
   def build_graph(self):
     """
-    Builds the graph from the network specific functions. The graph is built 
-    this to avoid calling the same part of the graph multiple times within 
-    each self.sess.run call (this leads to errrors).
+    Builds the graph from the network specific functions. The graph is built in
+    __init__ to avoid calling the same part of the graph multiple times within 
+    each self.sess.run call (this leads to errors).
     """
 
     self.predictionCLS = predictionClass(self.FLAGS.embedding_size, self.Nclasses)
@@ -338,13 +298,12 @@ class basicNNCLASS():
   #############################################################################
   def train(self, sess):
     """
-    Train the model by looping over epochs and making random batches for 
-    each epoch. The loss and accuracy is saved in the history for each 
-    self.config.sample_step minibatches.
-    self.config.Nepoch: The number of epochs trained over
-    self.config.batch_size: Maximimum size of each minibatch
-    self.config.sample_step: Save and print (if verbose) the loss and 
-        accuracy of each minibatch
+    Train the model by using tf.data class to supply batches. 
+    The loss and accuracy is saved in the history for each 
+    self.FLAGS.Nepoch: The number of epochs trained over
+    self.FLAGS.batch_size: Maximimum size of each minibatch
+    self.FLAGS.sample_step: Save and print (if verbose) the loss and 
+        accuracy ofter self.FLAGS.sample_step minibatch
 
     EDIT
       If there are network specific placeholders then the feed_dicts in 
@@ -426,20 +385,26 @@ class basicNNCLASS():
           # Save training data measurements
           self.writeSummary(emaTrainLoss, "train/loss", summaryWriter, global_step)
           self.writeSummary(emaTrainAccr, "train/acc", summaryWriter, global_step)
-          self.history["train"].append((global_step, emaTrainLoss, emaTrainAccr))
+          self.history["step"].append(global_step)
+          self.history["trainLoss"].append(emaTrainLoss)
+          self.history["trainAccr"].append(emaTrainAccr)
 
           # Evaluate validation data
           valLoss = self.get_loss(sess, dSet="val")
-          valAccs = self.get_accuracy(sess, dSet="val")
+          valAccr = self.get_accuracy(sess, dSet="val")
 
           self.writeSummary(valLoss, "val/loss", summaryWriter, global_step)
-          self.writeSummary(valAccs, "val/acc", summaryWriter, global_step)
-          self.history["val"].append((global_step, valLoss, valAccs))
+          self.writeSummary(valAccr, "val/acc", summaryWriter, global_step)
+          self.history["validLoss"].append(valLoss)
+          self.history["validAccr"].append(valAccr)
 
           # Logging results
           print_info = "%i\tTraining %.5f / %.5f \tValidation %.5f / %.5f" %\
-              (global_step, emaTrainLoss, emaTrainAccr, valLoss, valAccs)
+              (global_step, emaTrainLoss, emaTrainAccr, valLoss, valAccr)
           logging.info(print_info)
+
+          # plot training progress
+          self.plot_results()
 
 
         # Save model
@@ -480,12 +445,6 @@ class basicNNCLASS():
                     fileName=self.FLAGS.bestModel_acc_ckpt_path + "/" + self.FLAGS.experiment_name, 
                     global_step=global_step)
 
-         #self.plot_results()
-
-          if self.FLAGS.verbose:
-            pass
-            #print("Iteration(%i, %i)\tTrain[ Loss: %f\tAccuracy: %f]\tValidation[ Loss: %f\tAccuracy: %f]" % (epoch, ibt, self.loss_history["train"][-1], self.accuracy_history["train"][-1], self.loss_history["val"][-1], self.accuracy_history["val"][-1]))
-
 
     loss_train = self.get_loss(sess, dSet="train")
     acc_train  = self.get_accuracy(sess, dSet="train")
@@ -510,15 +469,16 @@ class basicNNCLASS():
   #############################################################################
   def plot_results(self):
     """
-    Plot the loss and accuracy history on both the train and validation
+    Plot the loss and accuracy history for both the train and validation
     datasets after training
     """
 
-    itrs = np.arange(len(self.history.keys()))
 
-    f1, (ax1) = plt.subplots()
-    h1, = ax1.plot(itrs, self.history["train"], "b-", label = "Loss - Train")
-    h2, = ax1.plot(itrs, self.history["val"], "b.", label = "Loss - Validation")
+    f1, ax1 = plt.subplots()
+    h1, = ax1.plot(self.history["step"], self.history["trainLoss"],\
+        "b-", label="Loss - Train")
+    h2, = ax1.plot(self.history["step"], self.history["validLoss"],\
+        "b.", label="Loss - Validation")
 
     ax1.set_ylabel("Loss", color = "blue")
     ax1.tick_params("y", color = "blue")
@@ -526,9 +486,9 @@ class basicNNCLASS():
     ax1.set_xlabel("Training Steps [{}]".format(self.FLAGS.eval_every))
 
     ax2 = ax1.twinx()
-    h3, = ax2.plot(itrs, self.accuracy_history["train"], "r-", \
+    h3, = ax2.plot(self.history["step"], self.history["trainAccr"], "r-",\
         label = "Accuracy - Train")
-    h4, = ax2.plot(itrs, self.accuracy_history["val"], "r.", \
+    h4, = ax2.plot(self.history["step"], self.history["validAccr"], "r.",\
         label = "Accuracy - Validation")
 
     ax2.set_ylabel("Accuracy", color = "red")
