@@ -99,9 +99,6 @@ def initializeModel(session, model, folderName, expect_exists=False, import_trai
     session.run(model.test_iter.initializer)
 
 
-  if import_train_history:
-    pass
-
 
 
 
