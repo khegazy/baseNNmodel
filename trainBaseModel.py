@@ -1,6 +1,7 @@
 import tensorflow as tf
 from tensorflow.python.framework import function
 from modules import *
+from baseModel import baseModel
 import numpy as np
 import matplotlib.pyplot as plt
 import pickle as pl
@@ -8,52 +9,26 @@ import collections
 import time
 import logging
 
-@function.Defun(tf.float32, tf.float32)
-def stable_norm_grad(x, dy):
-  #return dy*(x/(tf.norm(x, axis=-1)))
-  tdy = tf.tile(tf.expand_dims(dy,1), [1,2])
-  txn = tf.tile(tf.expand_dims(tf.norm(x, axis=-1), 1), [1,2]) + 1e-5
-  return tdy*(x/txn)
 
-@function.Defun(tf.float32, grad_func=stable_norm_grad)
-def stable_norm(x):
-  return tf.norm(x, axis=-1)
-
-class basicNNCLASS():
+class trainBaseModel(baseModel):
   """
-  basicNNCLASS is a parent class to neural networks that encapsulates all 
-  the logic necessary for training general nerual network architectures.
-  The graph is built by this class and the tensorflow session is passed 
-  to this class. Networks inhereting this class must inheret in the same
-  way as the function placeholders below:
-    ########################################
-    #####  Build Neural Network Class  #####
-    ########################################
-    class NN(modelClass):
-      
-      def __init__(self, ...):
-        modelCLASS.__init__(self, 
-            FLAGS, dataset_train, 
-            dataset_valid, 
-            dataset_test, 
-            parameters)
-      def initialize_placeHolders(self):
-        Function to initialize place holders, only run during __init__
-      def build_graph(self):
-        Function containing the network architecture to infer the 
-        predictions or logits
-      def add_loss(self, preds, Y):
-        Function to calculate loss (self.loss) given the predictions 
-        and truth values in self.prediction and self.labels.
-      def add_accuracy(self, preds, Y):
-        Function to calculate accuracy (self.accuracy) given the predictions 
-        and truth values in self.prediction and self.labels.
-
-  The model is trained after succusfully building the graph by calling
-  NN.train(session)
+  Training base model which inherits functions from baseModel and 
+  contains the training pipeline. The data pipeline is handled 
+  with the tf.data class. The following baseModel functions
+  are defined, or redefined
+    build_graph(self)
+    evaluate(...)
+    get_predictions(...)
+  The following training specific functions must be defined by the 
+  child class
+    model(self)
+    add_loss(self)
+    add_accuracy(self)
+  Training is started by calling 
+    model.train(sess)
   """
 
-  def __init__(self, FLAGS, dataset_train, dataset_valid, dataset_test, parameters):
+  def __init__(self, FLAGS, parameters, dataset_train, dataset_valid, dataset_test):
     """
     Initialize
       FLAGS:
@@ -66,23 +41,20 @@ class basicNNCLASS():
         variables that are not common among various NN archetictures,
         but specific to this network.
     """
+    
+    baseModel.__init__(self, FLAGS, parameters)
 
-    #############################
-    ##### Setting Variables #####
-    #############################
+    #######################
+    #####  Variables  #####
+    #######################
 
-    # FLAGS
-    self.FLAGS = FLAGS
+    self.loss     = None
+    self.accuracy = None
 
-    # Mode
-    if self.FLAGS.mode is "Train" or self.FLAGS.mode is "train":
-      self.mode = tf.estimator.ModeKeys.TRAIN
-    elif self.FLAGS.mode is "Eval" or self.FLAGS.mode is "eval":
-      self.mode = tf.estimator.ModeKeys.EVAL
-    else:
-      raise RuntimeError("ERROR: Do not recognize mode " + self.FLAGS.mode)
+    ##################
+    #####  Data  #####
+    ##################
 
-    # Data
     with tf.device('/cpu:0'):
       # Variables
       self.features = None
@@ -124,49 +96,49 @@ class basicNNCLASS():
       self.features, self.labels = self.iter.get_next()
       self.batch_size = tf.shape(self.features)[0]
 
-    # Parameters
-    self.Nrowcol = -1
-    if "NrowCol" in parameters:
-      self.Nrowcol  = parameters["NrowCol"]
+
+    ###################################
+    #####  Training Placeholders  #####
+    ###################################
     
-    self.Nclasses = -1
-    if "Nclasses" in parameters:
-      self.Nclasses = parameters["Nclasses"]
-
-    self.global_step = tf.Variable(0, name="global_step", trainable=False)
-
-    if self.FLAGS.verbose:
-      print("Printing parameters")
-      print("Nrowcol: \t{}".format(self.Nrowcol))
-      print("Nclasses: \t{}".format(self.Nclasses))
+    self.isTraining = tf.placeholder(name="isTraining", dtype=tf.bool)
 
 
-    #########################
+
+
+
+  #############################################################################
+  def build_graph(self):
+    """
+    Build network graph. Called in __init__ of the child class to avoid 
+    calling the same part of the graph multiple times within each 
+    self.sess.run call (this leads to errors). Now contains optimization
+    parameters and history/summary variables.
+    """
+
     #####  Build Graph  #####
-    #########################
-
-    with tf.variable_scope(self.FLAGS.model_name):
-      self.initialize_placeHolders()
-      self.build_graph()
-      self.add_loss()
-      self.add_accuracy()
+    baseModel.build_graph(self)
 
     #####  Create Optimization  #####
     with tf.variable_scope("optimize"):
+      self.add_loss()
+      self.add_accuracy()
       self.initialize_learning_rate()
       self.initialize_optimization()
-    
 
-    #####################################
     #####  History and Checkpoints  #####
-    #####################################
-
     self.hasTrained     = False
     self._lastSaved     = collections.defaultdict(None)
     self.history        = collections.defaultdict(list)
-    self.saver          = tf.train.Saver(tf.global_variables(), max_to_keep=FLAGS.keep)
-    self.bestLossSaver  = tf.train.Saver(tf.global_variables(), max_to_keep=FLAGS.keep)
-    self.bestAccSaver   = tf.train.Saver(tf.global_variables(), max_to_keep=FLAGS.keep)
+    self.saver          = tf.train.Saver(
+                            tf.global_variables(), 
+                            max_to_keep=self.FLAGS.keep)
+    self.bestLossSaver  = tf.train.Saver(
+                            tf.global_variables(), 
+                            max_to_keep=self.FLAGS.keep)
+    self.bestAccSaver   = tf.train.Saver(
+                            tf.global_variables(), 
+                            max_to_keep=self.FLAGS.keep)
 
     logging.basicConfig(level=logging.INFO)
     log_handler = logging.FileHandler("log.txt")
@@ -174,27 +146,7 @@ class basicNNCLASS():
 
     self.summaries = tf.summary.merge_all()
 
-    self._reset()
 
-
-  #############################################################################
-  def _reset(self):
-    """
-    Resets the graph before each time it is trained.
-    """
-
-    self.history = collections.defaultdict(list)
-
-
-  #############################################################################
-  def initialize_placeHolders(self):
-    """
-    Initialize all place holders with size variables from self.config
-    """
-
-    self.isTraining = tf.placeholder(name="isTraining", dtype=tf.bool)
-
-  
   #############################################################################
   def initialize_learning_rate(self):
     """
@@ -236,42 +188,32 @@ class basicNNCLASS():
 
 
   #############################################################################
-  def build_graph(self):
-    """
-    Builds the graph from the network specific functions. The graph is built in
-    __init__ to avoid calling the same part of the graph multiple times within 
-    each self.sess.run call (this leads to errors).
-    """
-
-    self.predictionCLS = predictionClass(self.FLAGS.embedding_size, self.Nclasses)
-    self.prediction = self.predictionCLS.predict(self.features, self.isTraining)
-
-
-  #############################################################################
   def add_loss(self):
-
-    with tf.variable_scope("loss"):
-      self.loss_sum = tf.reduce_sum(tf.nn.sparse_softmax_cross_entropy_with_logits(
-                            logits=self.prediction,
-                            labels=self.labels))
-      self.loss = tf.reduce_mean(tf.nn.sparse_softmax_cross_entropy_with_logits(
-                            logits=self.prediction,
-                            labels=self.labels))
-      tf.summary.scalar("loss", self.loss)
-
-
+    """
+    Loss function to be miniized by the optimizer. Must evaluate the 
+    descrepency between self.predictions and self.labels.
+    """
+  
+    raise RuntimeError("Must define function add_loss(self)")
+                            
+      
   #############################################################################
   def add_accuracy(self):
-
-    with tf.variable_scope("accuracy"):
-      logits = tf.argmax(self.prediction, axis=-1, output_type=tf.int32)
-      compare = tf.equal(logits, self.labels)
-      self.accuracy_sum = tf.reduce_sum(tf.cast(compare, tf.float32))
-      self.accuracy = tf.reduce_mean(tf.cast(compare, tf.float32))
-
+    """
+    Accuracy function to indicate training progress. Must evaluate the 
+    descrepency between self.predictions and self.labels.
+    """
+  
+    raise RuntimeError("Must define function add_accuracy(self)")
+      
 
   #############################################################################
   def run_train_step(self, sess, summaryWriter):
+    """
+    Training step called within the train function. Returns the loss,
+    accuracy, and global step in addition to optimizing the trainable
+    parameters.
+    """
 
     # Build feed dictionary
     input_feed = {
@@ -279,7 +221,8 @@ class basicNNCLASS():
       self.isTraining : True}
 
     # Output feed
-    output_feed = [self.loss, 
+    output_feed = [
+        self.loss, 
         self.accuracy, 
         self.global_step, 
         self.summaries, 
@@ -304,10 +247,6 @@ class basicNNCLASS():
     self.FLAGS.batch_size: Maximimum size of each minibatch
     self.FLAGS.sample_step: Save and print (if verbose) the loss and 
         accuracy ofter self.FLAGS.sample_step minibatch
-
-    EDIT
-      If there are network specific placeholders then the feed_dicts in 
-      this function must be changed to accommodate them.
     """  
 
     logging.info("////////////////////////////")
@@ -318,11 +257,6 @@ class basicNNCLASS():
     summaryWriter = tf.summary.FileWriter(
         "./checkpoints/", 
         sess.graph)
-
-    # Create handles
-    #self.train_handle = sess.run(self.train_iter.string_handle())
-    #self.valid_handle = sess.run(self.valid_iter.string_handle())
-    #self.test_handle = sess.run(self.test_iter.string_handle())
 
     # Initialize iterator
     sess.run(self.train_iter.initializer)
@@ -352,10 +286,10 @@ class basicNNCLASS():
       valLoss = self.get_loss(sess, dSet="val")
       valAccr = self.get_accuracy(sess, dSet="val")
 
-      print_info = "\tTraining %.5f / %.5f \tValidation %.5f / %.5f" %\
+      logging.info("\n\n/////  Begin Epoch {}  /////\n".format(epoch))
+      print_info = "0\tTraining %.5f / %.5f \tValidation %.5f / %.5f" %\
           (trnLoss, trnAccr, valLoss, valAccr)
-      logging.info("\n\n/////  Begin Epoch {}  /////\n".format(epoch) 
-          + print_info)
+      logging.info(print_info)
 
 
       # Initialize iterator
@@ -509,8 +443,7 @@ class basicNNCLASS():
   def evaluate(self, sess, outputs, dSet=None, dataX=None, dataY=None):
     """
     Run the session with inputs from feed_dict and return the outputs listed
-    in the list outputs. The following lines are required, but more items 
-    can be added to the feed_dict.
+    in the list outputs. 
     """
 
     feed_dict = {self.isTraining : False}
@@ -546,7 +479,10 @@ class basicNNCLASS():
 
   #############################################################################
   def get_predictions(self, sess, dSet=None, dataX=None, dataY=None):
-    
+    """
+    Get predictions for data provided via the options above.
+    """
+ 
     feed_dict = {self.isTraining : False}
 
     if dataX is not None and dataY is not None:
@@ -590,6 +526,9 @@ class basicNNCLASS():
 
   #############################################################################
   def get_accuracy(self, sess, dSet=None, dataX=None, dataY=None, isTraining=False):
+    """
+    Get the accuracy over the data specified by the above options.
+    """
 
     feed_dict = {self.isTraining : False}
 
@@ -631,6 +570,9 @@ class basicNNCLASS():
 
   #############################################################################
   def get_loss(self, sess, dSet=None, dataX=None, dataY=None):
+    """
+    Get the loss over the data specified by the above options.
+    """
 
     feed_dict = {self.isTraining : False}
 
@@ -671,7 +613,10 @@ class basicNNCLASS():
   
   #############################################################################
   def writeSummary(self, value, tag, summaryWriter, global_step):
-    """Write a single summary value to tensorboard"""
+    """
+    Write a single summary value to tensorboard
+    """
+
     summary = tf.Summary()
     summary.value.add(tag=tag, simple_value=value)
     summaryWriter.add_summary(summary, global_step)
