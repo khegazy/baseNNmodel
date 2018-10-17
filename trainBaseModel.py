@@ -286,10 +286,10 @@ class trainBaseModel(baseModel):
       valLoss = self.get_loss(sess, dSet="val")
       valAccr = self.get_accuracy(sess, dSet="val")
 
-      logging.info("\n\n/////  Begin Epoch {}  /////\n".format(epoch))
-      print_info = "0\tTraining %.5f / %.5f \tValidation %.5f / %.5f" %\
+      print_info = "Full Sets\tTraining %.5f / %.5f \tValidation %.5f / %.5f" %\
           (trnLoss, trnAccr, valLoss, valAccr)
-      logging.info(print_info)
+      logging.info("\n\n/////  Begin Epoch {}  /////\n".format(epoch)
+          + print_info)
 
 
       # Initialize iterator
