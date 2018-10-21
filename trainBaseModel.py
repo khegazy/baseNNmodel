@@ -558,10 +558,10 @@ class trainBaseModel(baseModel):
     runningAccr = 0
     while True:
       try :
-        _curAccr, _Nsamples = sess.run([self.accuracy_sum, self.batch_size],\
+        _curAccr, _Nsamples = sess.run([self.accuracy, self.batch_size],\
             feed_dict)
         Nsamples    += _Nsamples
-        runningAccr += _curAccr
+        runningAccr += _curAccr*_Nsamples
       except tf.errors.OutOfRangeError:
         break
 
@@ -601,10 +601,10 @@ class trainBaseModel(baseModel):
     runningLoss = 0
     while True:
       try :
-        _curLoss, _Nsamples = sess.run([self.loss_sum, self.batch_size],\
+        _curLoss, _Nsamples = sess.run([self.loss, self.batch_size],\
             feed_dict)
         Nsamples    += _Nsamples
-        runningLoss += _curLoss
+        runningLoss += _curLoss*_Nsamples
       except tf.errors.OutOfRangeError:
         break
 
