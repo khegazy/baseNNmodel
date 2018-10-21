@@ -111,9 +111,6 @@ class mnistTrainModel(mnistBaseModel, trainBaseModel):
   def add_loss(self):
 
     with tf.variable_scope("loss"):
-      self.loss_sum = tf.reduce_sum(tf.nn.sparse_softmax_cross_entropy_with_logits(
-                            logits=self.prediction,
-                            labels=self.labels))
       self.loss = tf.reduce_mean(tf.nn.sparse_softmax_cross_entropy_with_logits(
                             logits=self.prediction,
                             labels=self.labels))
@@ -126,7 +123,6 @@ class mnistTrainModel(mnistBaseModel, trainBaseModel):
     with tf.variable_scope("accuracy"):
       logits = tf.argmax(self.prediction, axis=-1, output_type=tf.int32)
       compare = tf.equal(logits, self.labels)
-      self.accuracy_sum = tf.reduce_sum(tf.cast(compare, tf.float32))
       self.accuracy = tf.reduce_mean(tf.cast(compare, tf.float32))
 
 
