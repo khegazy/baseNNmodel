@@ -4,7 +4,7 @@ sys.path.append("../")
 import tensorflow as tf
 from mnistModules import *
 from modules import *
-from mnistModel import mnistModel
+from mnistModels import *
 import numpy as np
 import random
 
@@ -124,7 +124,7 @@ if __name__ == "__main__":
       "Nclasses" : 10}
 
 
-  mnist = mnistModel(
+  mnist = get_mnistModel(
               FLAGS,
               parameters,
               dataset_train, 
