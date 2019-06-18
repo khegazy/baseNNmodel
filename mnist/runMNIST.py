@@ -73,7 +73,7 @@ if __name__ == "__main__":
   ######################
 
   ###  Import all the data  ####
-  dataDir = "data/mnist/"
+  dataDir = "data/"
   dataX_train, dataY_train, dataX_test, dataY_test = importData(dataDir)
 
   dataX_train -= np.mean(dataX_train)
